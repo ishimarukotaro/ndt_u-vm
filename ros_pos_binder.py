@@ -50,6 +50,7 @@ class pos_binder():
         self.time_queue = deque(maxlen=queue_size)
         self.x_pos_queue = deque(maxlen=queue_size)
         self.y_pos_queue = deque(maxlen=queue_size)
+        self.yaw_angle_queue = deque(maxlen=queue_size)
         self.listener = tf.TransformListener()
     def refrsh_pos(self, sub):     #センサからのデータを常に更新する
         #GNSSから得た位置情報
@@ -79,10 +80,12 @@ class pos_binder():
         quat_tmp = (self.global_ndt[1][0], self.global_ndt[1][1], self.global_ndt[1][2], self.global_ndt[1][3])
         # quaternion to euler angle
         self.euler = tf.transformations.euler_from_quaternion(quat_tmp) #euler[0]:pitch, euler[1]=roll, euler[2]=yaw
-        
+        # yaw by LiDAR
+        self.yaw_angle_queue.append(self.euler[2])
         if len(self.time_queue) < 2:
             self.u_ndt = 0.0 # this is for publishing something. this value has no meaning
-            self.vm_ndt = 0.0 # this is for publishing something. this value has no meaning 
+            self.vm_ndt = 0.0 # this is for publishing something. this value has no meaning
+            self.r_ndt = 0.0 # this is for publishing something. this value has no meaning 
         else:
             # time
             time_bef = self.time_queue[0]
@@ -96,13 +99,19 @@ class pos_binder():
             y_pos_aft = self.y_pos_queue[1] 
             dx_dy = np.array([[x_pos_aft - x_pos_bef], [y_pos_aft - y_pos_bef]])
             # rotation matrix
-            R = np.array([[math.cos(self.euler[2]), -math.sin(self.euler[2])],[math.sin(self.euler[2]), math.cos(self.euler[2])]]) 
+            R = np.array([[math.cos(self.euler[2]), math.sin(self.euler[2])],[-math.sin(self.euler[2]), math.cos(self.euler[2])]]) 
             # delta_x, delta_y
             delta_x_y = R @ dx_dy
             # velocity u,vm
-            u_vm = delta_x_y/dt
+            u_vm = delta_x_y / dt
             self.u_ndt = u_vm[0]
             self.vm_ndt = u_vm[1]
+            # delta yaw
+            yaw_angel_bef = self.yaw_angle_queue[0]
+            yaw_angel_aft = self.yaw_angle_queue[1]
+            dyaw = yaw_angel_aft - yaw_angel_bef
+            # yaw angle velocity
+            self.r_ndt = dyaw / dt
     def calc_velo_gyro(self):
         time_aft = rospy.Time.now()
         self.time_queue.append(time_aft)
@@ -144,6 +153,7 @@ def main():
         msg_pos_binder.yaw_gyro = sub_and_pub.yaw_gyro
         msg_pos_binder.r_gyro = sub_and_pub.r_gyro
         msg_pos_binder.yaw_ndt = sub_and_pub.euler[2]
+        msg_pos_binder.r_ndt = sub_and_pub.r_ndt
         pub.send_msg(msg_pos_binder)
         print("Hello World!")
         rate.sleep()
